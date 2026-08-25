@@ -41,13 +41,17 @@ Both knobs compose and token order is irrelevant; the implicit forms
 to find, which distorts C3's token accounting.
 
 ```
-list_siblings() -> [{name, status, description}, ...]
-    The sibling sessions sharing this session's cascade_driver_id.
-    Never includes the caller. Never crosses a cid.
+list_siblings() -> {"you": "<your own address>",
+                    "siblings": [{sibling_name, status,
+                                  profile_name, description}, ...]}
+    The other sessions sharing this session's cascade_driver_id.
+    NO self row — `you` is a scalar instead. Never crosses a cid.
 
-send_to_sibling(name, message, wake=False) -> {delivered, status}
-    Deliver `message` to the sibling addressed by `name`.
-    `name` is the cid-scoped unique name from session.new (step 3).
+send_to_sibling(sibling_name, message)
+    -> {status, sibling_name, bytes}
+    status: accepted | queued | no_such_sibling | sibling_cold | refused
+    `sibling_name` is the cid-scoped address from session.new (step 3).
+    There is NO `wake` argument — see §2.2.
 ```
 
 Two verbs is the whole surface the five claims need. `close_peer` /
@@ -103,27 +107,34 @@ the thing that will hold you to it:
 > is invisible to this search however it is worded.
 > — `shared/plugins/permission/channels.py:1300`
 
-### 2.2 `wake` defaults to false — **[settled: accepted]**
+### 2.2 ~~`wake` defaults to false~~ — **DECLINED: there is no flag**
 
-**C4 certifies both directions.**
+This section originally asked for `wake=False` with an opt-in override,
+and argued it from `send_to_subagent`'s idle branch dispatching. The
+argument was accepted; **the flag was not.** D1 resolved design §11 Q2
+the conservative way: **a cold sibling is never woken, and there is no
+argument that changes it.** The shipped signature has `sibling_name` and
+`message` and nothing else.
 
-The subagent precedent runs the *other* way, deliberately:
+Three reasons it is *absent* rather than *defaulted false*, which matter
+because the original wording implied it could come back:
 
-```python
-# subagent/plugin.py — send_to_subagent
-if session.is_running:      # busy -> queue at PARENT priority
-    session.inject_prompt(...)
-else:                       # idle -> dispatch to a background thread
-```
+- `wake_session` already revives a cold session, with signature checks
+  and event-id dedup that `send_to_sibling` has no business
+  reimplementing. A second, weaker revival path is the surprising one.
+- a flag would let a **sibling** revive a resting peer. §7 says siblings
+  coordinate; they do not act on one another. That is an authority
+  escalation wearing a convenience.
+- `sibling_cold` hands the caller the fact and lets it decide, which is
+  strictly more informative than doing the surprising thing quietly.
 
-Right for a subagent, which exists because its parent wanted work done.
-Wrong for a sibling: it makes every sibling a cost centre that any other sibling
-can start, and it turns §2.3's volley into one that also spins up cold
-sessions. Delivery to a sibling is a queue write; waking is opt-in.
-
-C4 asserts the inverse too — that `wake=True` really wakes — because a
-`send_to_sibling` that never wakes anything would pass a one-sided test
-while the flag was decorative.
+**Consequence for C4a:** the claim was rewritten. "Certify both
+directions or the flag is decorative" is void — there is no flag to be
+decorative. What replaced it is a pair the shipped design can actually
+be wrong about: **cold → `sibling_cold` with no turn started**,
+contrasted against **idle → `accepted` with a turn that does**. Both
+halves are needed; the cold half alone would pass on a `send_to_sibling`
+that never reached anybody.
 
 ### 2.3 `list_siblings` must carry `TRAIT_UNTRUSTED_CONTENT` — **[settled: taken]**
 

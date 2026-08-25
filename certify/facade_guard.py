@@ -338,3 +338,77 @@ def check_undefined_names(root: str = ".") -> List[UndefinedName]:
 
         _walk(top)
     return found
+
+
+# --- the spec against the contract ------------------------------------
+#: Words the surface once specified and no longer has.  A spec is a
+#: SECOND COPY of a fact that has an owner, and it drifts silently
+#: because nothing executes it: `wake=False` was designed and declined,
+#: `delivered` was deleted in framework #612, and `role`/`owner` were
+#: removed from the roster — and all four sat in a public SURFACE.md
+#: reading as a description of what shipped.
+#:
+#: Runtime was correct throughout.  Only the thing humans read was
+#: wrong, so nothing failed and nothing could.
+#: Matched as PARAMETERS or FIELDS (``wake=``, ``role:``), never as bare
+#: words — the corrected spec has to be able to SAY "there is no `wake`
+#: argument" without tripping the guard that keeps it out. A check that
+#: cannot tell a mention from a declaration would force the document to
+#: stay silent about what it withdrew, which is the opposite of the fix.
+WITHDRAWN_FROM_SURFACE = (r"\bwake\s*[=:]", r"\bdelivered\b\s*[,}=:]",
+                          r"\brole\s*[,}:]", r"\bowner\s*[,}:]")
+
+
+@dataclass
+class SpecDrift:
+    detail: str
+
+    def __str__(self) -> str:
+        return f"SURFACE.md: {self.detail}"
+
+
+def check_spec_matches_contract(spec_path: str = "SURFACE.md") -> List[SpecDrift]:
+    """The documented verb signatures must match ``certify/contract.py``.
+
+    The contract is not another document — it is what the probes call and
+    assert on, and the claims exercise it against a live framework.  So
+    anchoring the spec to it means the spec is checked against something
+    that is itself checked, rather than against my memory of a decision.
+    """
+    from certify import contract
+
+    try:
+        text = open(spec_path, encoding="utf-8").read()
+    except OSError as exc:
+        return [SpecDrift(f"unreadable: {exc}")]
+
+    # The fenced block in §1 that states the two SIGNATURES — matched on
+    # the call form `verb(`, not on the bare names, because the plugin
+    # scope example (`subagent(tools:[list_siblings,send_to_sibling])`)
+    # also mentions both and is not a signature.
+    blocks = [b for b in text.split("```")
+              if f"{contract.SEND_TO_SIBLING}(" in b
+              and f"{contract.LIST_SIBLINGS}(" in b]
+    if not blocks:
+        return [SpecDrift("no fenced block states both verb signatures")]
+    sig = blocks[0]
+
+    drift: List[SpecDrift] = []
+    if contract.SIBLING_NAME_ARG not in sig:
+        drift.append(SpecDrift(
+            f"the send signature does not name {contract.SIBLING_NAME_ARG!r}"))
+    for status in sorted(contract.RECEIPT_STATUSES):
+        if status not in sig:
+            drift.append(SpecDrift(f"receipt status {status!r} is undocumented"))
+    for field in (contract.FIELD_YOU, contract.FIELD_SIBLINGS,
+                  contract.FIELD_PROFILE_NAME, contract.FIELD_DESCRIPTION):
+        if field not in sig:
+            drift.append(SpecDrift(f"roster field {field!r} is undocumented"))
+    import re
+    for pattern in WITHDRAWN_FROM_SURFACE:
+        hit = re.search(pattern, sig)
+        if hit:
+            drift.append(SpecDrift(
+                f"the signature still declares {hit.group(0)!r}, which the "
+                f"shipped surface does not have"))
+    return drift

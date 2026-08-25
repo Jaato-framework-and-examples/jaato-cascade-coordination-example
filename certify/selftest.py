@@ -493,6 +493,38 @@ def _revert_mainline_check() -> Tuple[bool, str]:
     return True, "refuses an unmerged HEAD, accepts a mainline one"
 
 
+def _revert_spec_drift() -> Tuple[bool, str]:
+    """The public spec must match the contract the probes exercise.
+
+    This suite checks the FRAMEWORK's behaviour rigorously and, until
+    now, checked its own SPEC against nothing.  SURFACE.md shipped
+    publicly documenting `wake=False`, `delivered`, and a roster shape
+    with `role`/`owner` — a flag that was designed and declined, a status
+    word deleted upstream, and two fields removed by agreement. Runtime
+    was right the whole time; only the document a reader trusts first was
+    wrong, so nothing failed and nothing could.
+    """
+    import os
+    from certify.facade_guard import check_spec_matches_contract
+
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    live = check_spec_matches_contract(os.path.join(root, "SURFACE.md"))
+    if live:
+        return False, f"spec drift: {[str(d) for d in live]}"
+
+    with tempfile.TemporaryDirectory() as tmp:
+        planted = os.path.join(tmp, "SURFACE.md")
+        with open(planted, "w", encoding="utf-8") as fh:
+            fh.write("```\nlist_siblings() -> [...]\n"
+                     "send_to_sibling(name, message, wake=False)"
+                     " -> {delivered, status}\n```\n")
+        if not check_spec_matches_contract(planted):
+            return False, ("the exact signature this repository published "
+                           "went unreported — the guard cannot see the drift "
+                           "it exists to catch")
+    return True, "spec matches the contract; the published drift is caught"
+
+
 #: (id, what is reverted, the reversion)
 REVERSIONS: List[Tuple[str, str, Callable[[], Tuple[bool, str]]]] = [
     ("R1", "facade import guard (check_imports)", _revert_import_guard),
@@ -508,6 +540,7 @@ REVERSIONS: List[Tuple[str, str, Callable[[], Tuple[bool, str]]]] = [
     ("R11", "nothing reads an event field it did not declare", _revert_undeclared_field_reads),
     ("R12", "no function uses a name the module never binds", _revert_undefined_names),
     ("R13", "refuse to certify a commit that is not on the mainline", _revert_mainline_check),
+    ("R14", "the public spec matches the contract the probes exercise", _revert_spec_drift),
 ]
 
 

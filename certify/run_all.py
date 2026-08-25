@@ -53,12 +53,14 @@ def run() -> Report:
     leaks = facade_guard.check_publishable(".")
     internals = facade_guard.check_imports(".")
     undefined = facade_guard.check_undefined_names(".")
+    drift = facade_guard.check_spec_matches_contract("SURFACE.md")
     print("— publishable —")
-    for v in list(internals) + list(leaks) + list(undefined):
+    for v in list(internals) + list(leaks) + list(undefined) + list(drift):
         print(f"  ✘ {v}")
     print(f"  {len(internals)} server-internal import(s), "
           f"{len(leaks)} publishability violation(s), "
-          f"{len(undefined)} undefined name(s)")
+          f"{len(undefined)} undefined name(s), "
+          f"{len(drift)} spec drift(s)")
     print()
 
     print("— surface —")
