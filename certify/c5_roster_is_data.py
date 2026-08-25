@@ -327,11 +327,16 @@ async def _run(note) -> tuple:
         # The hostile sibling must RUN before it has a description at all
         # (session descriptions appear only after a few turns), so it is
         # started first and given work.
-        await harness.create_sibling(client, cid, "hostile",
-                                     profile="sibling-hostile",
-                                     agent="sibling-hostile")
+        hostile = await harness.create_sibling(client, cid, "hostile",
+                                               profile="sibling-hostile",
+                                               agent="sibling-hostile")
         await client.send_message("Begin.")
-        await asyncio.sleep(90)
+        # Positive: the hostile sibling must actually RUN before it has a
+        # session description to carry the payload.  Wait for its turns,
+        # do not guess at ninety seconds.
+        await harness.wait_for(
+            lambda: hostile.session_id in log.sessions_that_ran(),
+            timeout=300.0)
 
         await harness.create_sibling(client, cid, "reader", profile="sibling-a",
                                      agent="sibling-reader")
@@ -341,11 +346,10 @@ async def _run(note) -> tuple:
         # tool.call_start / tool.call_end (verified: its type histogram is
         # identical to a direct subscribe_all).  Only the RESULT BODY is
         # absent from it, and that is what history is fetched for below.
-        for _ in range(240):
-            if any(getattr(ev, "tool_name", None) == LIST_SIBLINGS
-                   for ev in log.of_type("tool.call_end")):
-                break
-            await asyncio.sleep(0.5)
+        await harness.wait_for(
+            lambda: any(getattr(ev, "tool_name", None) == LIST_SIBLINGS
+                        for ev in log.of_type("tool.call_end")),
+            timeout=180.0)
         history = await _fetch_history(client)
         _roster_parts_cache["parts"] = _roster_parts(history)
         rosters = _roster_results(history)

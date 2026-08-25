@@ -118,6 +118,20 @@ async def _run(report_note) -> tuple:
         await asyncio.wait_for(_until_peer_b_ran(log, sibling_b), timeout=180.0)
         # Fetch BEFORE disconnecting: the receipt body lives in session
         # history, and history is served for the client's live session.
+        # The claim is ESTABLISHED here: sibling-b took a turn with the
+        # driver leashed.  Only now does the driver touch anything, and
+        # only to make the evidence readable — a sender's transcript is
+        # written on SAVE, so without this the receipt is not on disk and
+        # the vocabulary assertion abstains rather than passing.
+        #
+        # On `client`, not `leashed`: attaching is not a relay, but it IS
+        # an action, so it happens AFTER the window it could have
+        # contaminated rather than during it.
+        await client.attach_session(sibling_b.session_id)
+        await client.attach_session(sibling_a.session_id)
+        await harness.wait_for(
+            lambda: bool(harness.tool_calls_from_disk(cid, SEND_TO_SIBLING)),
+            timeout=120.0)
         bodies = [str(c["response"]) for c in
                   harness.tool_calls_from_disk(cid, SEND_TO_SIBLING)]
     finally:

@@ -544,3 +544,29 @@ def body_reports_error(body: str) -> bool:
     """
     flat = body.replace(" ", "").replace("'", '"')
     return '"status":"error"' in flat or '"error":' in flat
+
+
+# --- waiting ---------------------------------------------------------
+async def wait_for(predicate, timeout: float = 180.0,
+                   poll: float = 0.5) -> bool:
+    """Wait until ``predicate()`` is true, or ``timeout``.  True if it held.
+
+    For POSITIVE facts — a turn completed, a receipt appeared, a tool
+    call ended.  Every one of those has a signal, so waiting a fixed
+    interval for them is pure waste: the suite spent the overwhelming
+    majority of its wall-clock asleep, at roughly one provider call every
+    two to three minutes, which is what made twenty-minute runs cost
+    about two dollars.  Slow and expensive are different problems and the
+    fixed sleeps were only ever the first.
+
+    NEGATIVE facts are different and this helper does not apply to them.
+    "The cold sibling was NOT woken" cannot be established by an event —
+    the absence IS the finding, so a real window has to elapse.  Those
+    stay as explicit sleeps, and say so where they appear.
+    """
+    deadline = asyncio.get_event_loop().time() + timeout
+    while asyncio.get_event_loop().time() < deadline:
+        if predicate():
+            return True
+        await asyncio.sleep(poll)
+    return False
