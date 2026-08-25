@@ -93,7 +93,32 @@ The rule that works: **witness the key, not the value.** An attribute →
 grep for an *assignment*. A namespace → is anything in it? A field →
 check it against the class. And it does not generalise from being
 learned once; it needs a mechanical check per instance, which is what
-R10–R13 are.
+R10–R14 are.
+
+A corollary, and it explains the shape of the whole list:
+
+> **Any second copy of a fact rots unless something executes the
+> comparison — and the copy that rots is the one that cannot fail.**
+
+Runtime copies get exercised; prose, specs and the-branch-nobody-runs do
+not. That is why these were *invisible* rather than intermittent. The
+same defect ran through stale enum docstrings, a public spec describing a
+declined flag, four cloned copies of one queue-or-drive decision, and a
+traceback field written by one end and read by none — different media,
+one fault.
+
+It is also why R14 anchors `SURFACE.md` to [`contract.py`](contract.py)
+rather than to another document: the contract is what the probes call,
+and the claims exercise it against a live framework. Anchoring a spec to
+a third copy would have been the same defect again. Anchoring it to the
+thing that is itself executed is the only version that terminates.
+
+And absence has to be **expressible without being forgeable**. R14
+matches withdrawn names as parameters (`wake=`), never as bare words, so
+the spec can say *"there is no `wake` argument"* without tripping the
+guard that keeps it out — the same reason the framework emits no
+`<no traceback available>` placeholder: a consumer reading that string is
+back where they started.
 
 ## What it found
 
