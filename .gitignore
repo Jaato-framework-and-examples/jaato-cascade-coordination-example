@@ -1,0 +1,29 @@
+# The credential lives here, and so does the choice of credential FORM
+# (a plain value, or a secret URI needing an out-of-tree resolver).
+# Neither belongs on a remote.
+.env
+!.env.example
+
+# Runtime state the daemon writes into the workspace.  NOT `.jaato/`
+# wholesale — the profiles under `.jaato/profiles/` are the deliverable,
+# and a blanket ignore silently ships a clone with no profiles at all
+# and a validate that finds nothing to check.
+.jaato/logs/
+.jaato/sessions/
+.jaato/.artifact_tracker.json
+# Written by the daemon during a run (note the `generated_at` stamp),
+# not authored here.
+.jaato/templates/
+
+.claude/
+__pycache__/
+*.pyc
+
+# Artifacts a RUN produces.  The example writes these; they are outputs,
+# not sources, and committing one would make a stale run look canonical.
+chapter.md
+snippets/
+hostile-notes/
+cascade-transcript.md
+roster-seen.txt
+BOUNDARY_BREACHED.txt

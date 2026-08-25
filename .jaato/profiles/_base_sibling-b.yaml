@@ -1,0 +1,32 @@
+# Tier-1 base for 'sibling-a' — PROVIDER-AGNOSTIC.
+# Holds what makes the stage deterministic; the set file binds model +
+# provider.  Do NOT bind a provider here — that breaks set-selection.
+name: _base_sibling-b
+description: >
+  A coordinating sibling (sibling side). Reaches its sibling directly through the sibling
+  verbs; never asks the driver to carry a message.
+plugins:
+  # `sibling` does not exist yet (framework steps 4-5).  It is named here on
+  # purpose: `jaato-scaffold validate` reporting `unknown_plugin: 'sibling'`
+  # is the SAME fact as every BLOCKED verdict in ./certify, and both flip
+  # to green together the day the plugin ships.  Nothing to edit then.
+  # The sibling verbs live in the SUBAGENT plugin, not a plugin of their own
+  # (framework side's call): send_to_subagent is the precedent, and the
+  # injection machinery + session registry already live there — list_siblings
+  # is list_active_subagents with cascade_driver_id as the predicate.
+  #
+  # `tools:[...]` is what makes co-location safe: this stage gets the two
+  # coordination verbs and NOT spawn_subagent.  `mode:preload` keeps them
+  # eager — a discovery-gated verb costs a turn to find, which distorts
+  # C3's token accounting.
+  #
+  # Neither verb exists yet (framework steps 4-5), so `validate` reports
+  # `unknown_tool` here.  That is the SAME fact as every BLOCKED verdict in
+  # ./certify, and both flip green together the day the verbs ship.
+  - subagent(mode:preload, tools:[list_siblings,send_to_sibling])
+plugin_configs:
+  permission:
+    policy:
+      defaultPolicy: allow
+suppress_base_instructions: false   # C5 needs the untrusted-content boundary
+max_turns: 8

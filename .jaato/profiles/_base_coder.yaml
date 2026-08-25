@@ -1,0 +1,47 @@
+# Tier-1 base for the 'coder' role — PROVIDER-AGNOSTIC.
+# The set file binds model + provider; do not bind them here.
+name: _base_coder
+description: >
+  The coder role of the chapter cascade. A SERVICE: it answers requests
+  and never decides it is finished.
+
+  Deliberately declares NO completion_payload_schema. Declaring one is
+  what exposes `signal_completion`, so withholding it removes the
+  coder's ability to exit at all — and that is the point. A jaato
+  session is not a service loop: given a turn with nothing to do, a
+  model will signal completion, and the first version of this example
+  did exactly that. The writer's snippet requests then arrived at a
+  session that had already gone, so the coder wrote nothing and the
+  chapter kept its placeholders.
+
+  Instructing it to "keep serving until told to stop" did not survive an
+  empty turn. Removing the exit does. Same rule the driver follows
+  elsewhere here: a participant does not end the loop it is in.
+plugins:
+  - file_edit(preload)
+  - subagent(mode:preload, tools:[list_siblings,send_to_sibling])
+plugin_configs:
+  permission:
+    policy:
+      defaultPolicy: allow
+max_turns: 24
+
+# NOTE: deliberately NO budget_control here.
+# A profile that declares its own budget is accounted separately and is
+# skipped by the cascade pool entirely, so a ceiling declared on the
+# cascade would stop seeing this session's spend.  The ceiling for all
+# three roles is declared ONCE on the cascade id by the driver, with
+# cascade_budget_set().
+
+# Measured: this workspace inherits ~24,000 tokens of base instructions
+# from ~/.jaato/instructions/00-system-instructions.md (48,918 bytes),
+# which every session loads unless it opts out.  One coder turn cost
+# 29,987 prompt tokens as shipped and 5,679 with this line — 81% of the
+# context was instructions this role never needed.
+#
+# Each role here carries its own persona in .jaato/agents/, so the
+# global layer adds nothing but cost.  Suppressing it is what makes a
+# cascade budget measurable rather than guessed: the first run set a
+# 120k ceiling, the writer alone blew through it, and the framework
+# correctly refused to spawn the reviewer.
+suppress_base_instructions: true

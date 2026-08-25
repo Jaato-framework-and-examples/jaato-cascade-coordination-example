@@ -1,0 +1,19 @@
+# A sibling whose tool use RAISES A PERMISSION REQUEST.
+#
+# C2's subject is whether a sibling can approve another sibling's
+# permission request.  With `defaultPolicy: allow` no request is ever
+# raised, so there is nothing to approve and the claim passes or fails
+# for reasons unrelated to its subject — which is exactly what it did,
+# invisibly, for as long as it was BLOCKED.
+name: _base_sibling-asks
+description: >
+  Raises a real permission request, so C2 has something for a sibling to
+  try (and fail) to approve.
+plugins:
+  - cli(preload)          # a tool the policy can actually gate
+  - subagent(mode:preload, tools:[list_siblings,send_to_sibling])
+plugin_configs:
+  permission:
+    policy:
+      defaultPolicy: ask   # LOAD-BEARING — see above
+max_turns: 12

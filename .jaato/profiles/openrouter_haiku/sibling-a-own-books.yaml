@@ -1,0 +1,24 @@
+# sibling-a-own-books — C3.  Declares its OWN budget_control, which is what
+# makes session_manager skip it in both the pool accumulate path
+# (:4601) and the spawn-time reconcile (:4546).  Two of these in one
+# cascade are the hole: each burns a private ceiling, the pool sees
+# nothing, and no pool rung can fire to end the volley.
+name: sibling-a-own-books
+inherits: [_base_sibling-a]
+plugins: []
+model: anthropic/claude-haiku-4.5
+provider: openrouter
+budget_control:
+  # tokens, not usd: openrouter reports no cost here, so a usd rung
+  # would sit at 0 and never fire.
+  limits:
+    tokens: 20000
+  degrade:
+    - at: 100%
+      action: abort
+plugin_configs:
+  openrouter:
+    api_key: "${JAATO_OPENROUTER_API_KEY}"
+    api_params:
+      temperature: 0.0
+      max_tokens: 256

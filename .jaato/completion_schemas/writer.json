@@ -1,0 +1,37 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "writer completion",
+  "description": "The writer's only exit. Declaring a completion schema is what exposes signal_completion at all, so this file is what makes the write phase terminable.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "outcome",
+    "chapter_path",
+    "summary"
+  ],
+  "properties": {
+    "outcome": {
+      "type": "string",
+      "enum": [
+        "ready_for_review",
+        "blocked"
+      ],
+      "description": "ready_for_review \u2014 the chapter is complete AND every snippet placeholder has been replaced with a path the coder sent. blocked \u2014 a real dead end, nobody is coming. NOTE: waiting for a sibling's reply is NEITHER. To wait, simply end your turn without calling signal_completion: the session stays alive and the reply wakes it. Calling this tool ENDS the session and the reply is lost."
+    },
+    "chapter_path": {
+      "type": "string",
+      "description": "Workspace-relative path of the chapter this writer owns."
+    },
+    "snippets_used": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Snippet ids requested from the coder and actually included."
+    },
+    "summary": {
+      "type": "string",
+      "description": "One sentence: what the chapter now covers."
+    }
+  }
+}

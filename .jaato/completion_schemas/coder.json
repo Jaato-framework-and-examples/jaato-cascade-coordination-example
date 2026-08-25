@@ -1,0 +1,20 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "coder completion",
+  "description": "The coder's exit. It does not decide when the chapter is done — the driver stops it once the writer reports ready_for_review, because a participant in a loop must not be its terminator.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["outcome", "snippets_written"],
+  "properties": {
+    "outcome": {
+      "type": "string",
+      "enum": ["stopped"],
+      "description": "Only one branch: the coder stops when asked, never on its own judgement."
+    },
+    "snippets_written": {
+      "type": "array",
+      "items": {"type": "string"},
+      "description": "Paths written under snippets/. The coder only ever CREATES files, so nothing is edited concurrently."
+    }
+  }
+}

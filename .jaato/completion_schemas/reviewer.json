@@ -1,0 +1,24 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "reviewer completion",
+  "description": "The verdict that ends the cascade, or sends it round once more.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["verdict", "reasons"],
+  "properties": {
+    "verdict": {
+      "type": "string",
+      "enum": ["accept", "revise"],
+      "description": "accept — the chapter meets the bar, the cascade is done. revise — send the reasons back to the writer."
+    },
+    "reasons": {
+      "type": "array",
+      "items": {"type": "string"},
+      "description": "Specific, actionable. On accept this may be empty."
+    },
+    "next_chapter": {
+      "type": "string",
+      "description": "Optional title for a following chapter. The reduced example records it and stops; the multi-chapter loop is the documented next step."
+    }
+  }
+}

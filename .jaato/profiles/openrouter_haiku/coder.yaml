@@ -1,0 +1,12 @@
+# coder — openrouter set: anthropic/claude-haiku-4.5.
+name: coder
+inherits: [_base_coder]
+plugins: []          # empty keeps the inherited _base surface
+model: anthropic/claude-haiku-4.5
+provider: openrouter
+plugin_configs:
+  openrouter:
+    api_key: "${JAATO_OPENROUTER_API_KEY}"
+    api_params:
+      temperature: 0.0
+      max_tokens: 1500
