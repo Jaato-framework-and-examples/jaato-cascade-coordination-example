@@ -522,7 +522,17 @@ def _revert_spec_drift() -> Tuple[bool, str]:
             return False, ("the exact signature this repository published "
                            "went unreported — the guard cannot see the drift "
                            "it exists to catch")
-    return True, "spec matches the contract; the published drift is caught"
+    # Second anchor, available since framework #615 published tool
+    # parameters: the spec must also match what the FRAMEWORK declares.
+    # Not a replacement — the contract is what the probes CALL, and the
+    # two can disagree, which is the drift worth catching.
+    from certify.facade_guard import check_spec_matches_framework
+    live_fw = check_spec_matches_framework(os.path.join(root, "SURFACE.md"))
+    if live_fw:
+        return False, f"spec vs framework: {[str(d) for d in live_fw]}"
+
+    return True, ("spec matches the contract AND the framework's published "
+                  "parameters; the drift this repo published is caught")
 
 
 #: (id, what is reverted, the reversion)

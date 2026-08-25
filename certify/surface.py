@@ -274,10 +274,13 @@ def probe() -> SurfaceReport:
 def _arg_visible(tool_doc: dict, arg: str) -> bool:
     """Is ``arg`` observable in whatever the CLI publishes for this tool?
 
-    Today ``explain plugin --json`` publishes name + description only, so
-    the honest answer for a parameter is "not visible from here" unless
-    the CLI grows a schema view.  Checked against the document rather
-    than assumed, so this starts reporting the truth the day it does.
+    It is now: ``explain plugin --json`` gained a ``parameters`` block
+    (framework #615), so a tool SIGNATURE is checkable from the facade.
+    Before that this returned False for everything and said so.
+
+    Written to read the document rather than assume its shape, which is
+    why it started reporting the truth the day the block appeared,
+    without an edit here.
     """
     params = tool_doc.get("parameters") or tool_doc.get("schema")
     if isinstance(params, dict):

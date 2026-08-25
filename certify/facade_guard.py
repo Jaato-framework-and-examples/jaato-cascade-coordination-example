@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import ast
 import os
+import shutil
 from dataclasses import dataclass, field
 from typing import Any, Callable, Iterable, List, Sequence, Set
 
@@ -411,4 +412,62 @@ def check_spec_matches_contract(spec_path: str = "SURFACE.md") -> List[SpecDrift
             drift.append(SpecDrift(
                 f"the signature still declares {hit.group(0)!r}, which the "
                 f"shipped surface does not have"))
+    return drift
+
+
+def check_spec_matches_framework(spec_path: str = "SURFACE.md") -> List[SpecDrift]:
+    """The documented parameters must match what the framework publishes.
+
+    A second anchor, added when ``explain plugin --json`` gained a
+    ``parameters`` block (framework #615).  It is not a replacement for
+    :func:`check_spec_matches_contract`: that one anchors the spec to
+    what the PROBES call, which the claims exercise live.  This one
+    anchors it to what the FRAMEWORK declares.
+
+    Both matter, and they can disagree — a probe calling an argument the
+    framework does not declare would pass the first check and fail this
+    one, which is precisely the drift worth catching.
+
+    Returns [] when the framework publishes no parameters, rather than
+    inventing a verdict: absent and empty must not read alike here of
+    all places.
+    """
+    import json
+    import subprocess
+    from certify import contract
+
+    exe = shutil.which("jaato-scaffold")
+    if exe is None:
+        return []
+    out = subprocess.run(
+        [exe, "explain", "plugin", contract.HOST_PLUGIN, "--json"],
+        capture_output=True, text=True, check=False)
+    try:
+        doc = json.loads(out.stdout)
+    except json.JSONDecodeError:
+        return []
+    tools = {t.get("name"): t for t in doc.get("tools", [])}
+    tool = tools.get(contract.SEND_TO_SIBLING)
+    if not tool:
+        return []
+    params = (tool.get("parameters") or {}).get("properties")
+    if not params:
+        return []          # nothing published — assert nothing
+
+    try:
+        text = open(spec_path, encoding="utf-8").read()
+    except OSError:
+        return []
+    blocks = [b for b in text.split("```")
+              if f"{contract.SEND_TO_SIBLING}(" in b]
+    if not blocks:
+        return [SpecDrift("no fenced block states the send signature")]
+    sig = blocks[0]
+
+    drift: List[SpecDrift] = []
+    for name in params:
+        if name not in sig:
+            drift.append(SpecDrift(
+                f"the framework declares parameter {name!r} and the spec "
+                f"does not document it"))
     return drift

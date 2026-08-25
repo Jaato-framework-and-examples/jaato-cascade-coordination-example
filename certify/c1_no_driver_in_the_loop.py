@@ -167,8 +167,19 @@ def certify() -> Verdict:
         v.detail = "sibling-b never took a turn; no sibling traffic occurred"
         return v
 
+    # A MISSING receipt must not pass this check by being absent.  The
+    # first green C1 reported "receipt status: None" and skipped the
+    # vocabulary assertion entirely — the claim's other halves were
+    # genuinely exercised, but this one silently was not. Absent and
+    # empty again, inside the claim this suite exists to make.
     status = _receipt_status(bodies)
-    if status is not None and status not in RECEIPT_STATUSES:
+    if status is None:
+        v.detail = (f"no send_to_sibling receipt was found in the cascade's "
+                    f"transcripts, so the receipt vocabulary was never "
+                    f"checked. sibling-b did run and the leash held, but "
+                    f"this claim does not pass on two of three assertions.")
+        return v
+    if status not in RECEIPT_STATUSES:
         v.detail = (f"send_to_sibling returned an undeclared status {status!r}; "
                     f"the receipt contract is {sorted(RECEIPT_STATUSES)}")
         return v
