@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import ast
 import os
+import re
 import shutil
 from dataclasses import dataclass, field
 from typing import Any, Callable, Iterable, List, Sequence, Set
@@ -471,3 +472,63 @@ def check_spec_matches_framework(spec_path: str = "SURFACE.md") -> List[SpecDrif
                 f"the framework declares parameter {name!r} and the spec "
                 f"does not document it"))
     return drift
+
+
+def check_inject_vocabulary_matches_framework() -> List[SpecDrift]:
+    """``contract.INJECT_*`` must match ``shared.message_delivery``.
+
+    The contract is a SECOND COPY of a fact the framework owns, and a
+    second copy rots unless something executes the comparison.  The copy
+    that rots is always the one that cannot fail — so this compares the
+    two sets rather than trusting that a human kept them aligned.
+
+    Anchored to the framework MODULE, not to prose about it: the module
+    is what the daemon runs, so a rename there breaks this immediately
+    instead of at the next live run that reads a status no longer sent.
+
+    Returns [] when the module is absent (a framework predating #619)
+    rather than inventing a verdict — a missing module and a mismatched
+    one are different facts and must not render alike.
+    """
+    from certify import contract, harness
+
+    path = os.path.join(harness.framework_root(), "jaato-server",
+                        "shared", "message_delivery.py")
+    if not os.path.isfile(path):
+        return []
+
+    ns: dict = {}
+    with open(path, encoding="utf-8") as fh:
+        source = fh.read()
+    # Read the constants without importing: the module imports framework
+    # internals, and this repository must not.
+    for line in source.splitlines():
+        if re.match(r"^[A-Z_]+ = ", line):
+            exec(line, {"frozenset": frozenset}, ns)   # noqa: S102 — literals only
+
+    drifts: List[SpecDrift] = []
+    theirs = {k: v for k, v in ns.items() if isinstance(v, str)}
+    mine = {
+        "QUEUED": contract.INJECT_QUEUED,
+        "ACCEPTED": contract.INJECT_ACCEPTED,
+        "TERMINATED": contract.INJECT_TERMINATED,
+        "NO_SESSION": contract.INJECT_NO_SESSION,
+        "UNREACHABLE": contract.INJECT_UNREACHABLE,
+        "BUSY": contract.INJECT_BUSY,
+    }
+    for name, value in mine.items():
+        if name not in theirs:
+            drifts.append(SpecDrift(
+                f"contract pins {name}={value!r} but message_delivery.py "
+                f"no longer defines it"))
+        elif theirs[name] != value:
+            drifts.append(SpecDrift(
+                f"contract pins {name}={value!r}; the framework says "
+                f"{theirs[name]!r}"))
+
+    delivered = ns.get("DELIVERED")
+    if delivered is not None and set(delivered) != set(contract.INJECT_DELIVERED):
+        drifts.append(SpecDrift(
+            f"DELIVERED disagrees: contract {sorted(contract.INJECT_DELIVERED)} "
+            f"vs framework {sorted(delivered)}"))
+    return drifts

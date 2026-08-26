@@ -535,6 +535,58 @@ def _revert_spec_drift() -> Tuple[bool, str]:
                   "parameters; the drift this repo published is caught")
 
 
+def _revert_inject_vocabulary() -> Tuple[bool, str]:
+    """The contract's delivery words must match the framework's.
+
+    ``contract.INJECT_*`` is a SECOND COPY of a vocabulary the framework
+    owns.  Every second copy in this arc has rotted the same way — the
+    one that cannot fail is the one that goes wrong — so the copy is
+    compared against ``shared/message_delivery.py`` rather than trusted.
+
+    Reverted here by patching the contract to the PRE-#619 belief: that
+    an ended sibling has no `terminated` spelling.  That was true of the
+    send_to_sibling receipt and false of the delivery decision, and it is
+    exactly the kind of half-true carried forward that this guard exists
+    to stop.
+    """
+    from certify import contract
+    from certify.facade_guard import check_inject_vocabulary_matches_framework
+
+    live = check_inject_vocabulary_matches_framework()
+    if live:
+        return False, f"vocabulary drift: {[str(d) for d in live]}"
+
+    original = contract.INJECT_TERMINATED
+    try:
+        contract.INJECT_TERMINATED = "sibling_terminated"
+        planted = check_inject_vocabulary_matches_framework()
+    finally:
+        contract.INJECT_TERMINATED = original
+
+    if not planted:
+        return False, ("a contract pinning a status word the framework does "
+                       "not send went unreported — the copy cannot rot "
+                       "loudly, which is the whole reason it is compared")
+
+    # And absent must not read as agreement: with no framework module
+    # (a pre-#619 checkout) the guard must return [] rather than invent
+    # a verdict about a vocabulary that does not exist yet.
+    import certify.harness as _h
+    original_root = _h.framework_root
+    try:
+        _h.framework_root = lambda: "/nonexistent"
+        if check_inject_vocabulary_matches_framework():
+            return False, ("reported drift against a framework that has no "
+                           "message_delivery module — absent and mismatched "
+                           "must not render alike")
+    finally:
+        _h.framework_root = original_root
+
+    return True, ("contract matches shared/message_delivery.py; a planted "
+                  "wrong status word is caught, and a missing module is "
+                  "not mistaken for agreement")
+
+
 #: (id, what is reverted, the reversion)
 REVERSIONS: List[Tuple[str, str, Callable[[], Tuple[bool, str]]]] = [
     ("R1", "facade import guard (check_imports)", _revert_import_guard),
@@ -551,6 +603,8 @@ REVERSIONS: List[Tuple[str, str, Callable[[], Tuple[bool, str]]]] = [
     ("R12", "no function uses a name the module never binds", _revert_undefined_names),
     ("R13", "refuse to certify a commit that is not on the mainline", _revert_mainline_check),
     ("R14", "the public spec matches the contract the probes exercise", _revert_spec_drift),
+    ("R15", "the delivery vocabulary matches the framework's own module",
+     _revert_inject_vocabulary),
 ]
 
 

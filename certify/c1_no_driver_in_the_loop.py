@@ -124,17 +124,27 @@ async def _run(report_note) -> tuple:
         # written on SAVE, so without this the receipt is not on disk and
         # the vocabulary assertion abstains rather than passing.
         #
-        # On `client`, not `leashed`: attaching is not a relay, but it IS
-        # an action, so it happens AFTER the window it could have
+        # On `client`, not `leashed`: saving is not a relay, but it IS an
+        # action, so it happens AFTER the window it could have
         # contaminated rather than during it.
-        await client.attach_session(sibling_b.session_id)
-        await client.attach_session(sibling_a.session_id)
+        #
+        # This was two attach_session calls until #617 shipped the verb.
+        # The hack worked by unloading the session the client LEFT, and
+        # did nothing at all when the client was already attached
+        # elsewhere — a save that reports success by saying nothing.
+        # ONE save is enough here, unlike C4's loop: this runs only after
+        # sibling-b has demonstrably taken its turn, so the send it is
+        # looking for provably already happened.  The wait below covers
+        # the write's latency, not the possibility of more evidence
+        # arriving — there is none left to arrive.
+        await harness.save_session(client, sibling_a.session_id)
         await harness.wait_for(
             lambda: bool(harness.tool_calls_from_disk(cid, SEND_TO_SIBLING)),
             timeout=120.0)
         bodies = [str(c["response"]) for c in
                   harness.tool_calls_from_disk(cid, SEND_TO_SIBLING)]
     finally:
+        await harness.release_siblings(client, sibling_a, sibling_b)
         observer.cancel()
         await client.disconnect()
 

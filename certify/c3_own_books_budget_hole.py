@@ -151,14 +151,15 @@ async def _run(note) -> tuple:
             counter.observe(ev)
 
     observer = asyncio.create_task(_observe())
+    partner = initiator = None      # bound for release below
     try:
         # Both profiles declare budget_control -> own books, both of them.
-        await harness.create_sibling(client, cid, "partner",
-                                     profile="sibling-b-own-books",
-                                     agent="sibling-partner")
-        await harness.create_sibling(client, cid, "initiator",
-                                     profile="sibling-a-own-books",
-                                     agent="sibling-initiator")
+        partner = await harness.create_sibling(client, cid, "partner",
+                                               profile="sibling-b-own-books",
+                                               agent="sibling-partner")
+        initiator = await harness.create_sibling(client, cid, "initiator",
+                                                 profile="sibling-a-own-books",
+                                                 agent="sibling-initiator")
 
         opening = await _budget_snapshot(client, cid, log)
         note(f"pool at open: {opening}")
@@ -173,6 +174,7 @@ async def _run(note) -> tuple:
         closing = await _budget_snapshot(client, cid, log)
         note(f"pool at close: {closing}")
     finally:
+        await harness.release_siblings(client, partner, initiator)
         observer.cancel()
         await client.disconnect()
 

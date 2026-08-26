@@ -132,12 +132,27 @@ async def _run(note) -> tuple:
     if not await client.connect(timeout=120.0):
         raise harness.PreconditionUnmet("daemon did not start; run the doctor")
 
+    # A SEPARATE CLIENT FOR OBSERVATION.  This claim reaches `cold` by
+    # attaching the driving client away from a session, so that client's
+    # attachment moves three times during the run — and the cascade
+    # subscription lives on the client.  An identical probe that made no
+    # attach calls saw the idle sibling's `turn.completed`, stamped and
+    # attributable; this claim, watching through the client it was also
+    # attaching elsewhere, saw no such event while the daemon log showed
+    # the turn running for 42 seconds.
+    #
+    # Observing through a client whose attachment is part of the
+    # experiment means the witness is inside the thing being tested.
+    watcher = harness.new_client()
+    if not await watcher.connect(timeout=120.0):
+        raise harness.PreconditionUnmet("observer client could not connect")
+
     cid = harness.new_cascade_id()
     log = harness.EventLog()
 
     async def _observe() -> None:
-        async for ev in client.cascade_events(cid, event_types=None,
-                                              role="observer"):
+        async for ev in watcher.cascade_events(cid, event_types=None,
+                                               role="observer"):
             log.record(ev)
 
     observer = asyncio.create_task(_observe())
@@ -180,34 +195,95 @@ async def _run(note) -> tuple:
         cold_woke = _woken(log, resting.session_id)
         note(f"cold: woken={cold_woke}")
 
-        # 2. IDLE: must be accepted, and a turn must start on ITS session.
-        await client.inject_prompt(IDLE_SEND, source_type="user",
-                                   source_id="certify-c4")
-        await asyncio.sleep(QUIET_WINDOW_S)
-        idle_ran = awake.session_id in log.sessions_that_ran()
-        note(f"idle: took_a_turn={idle_ran}")
+        # 2. IDLE: must be accepted, and a NEW turn must start on ITS session.
+        #
+        # TWO WAITS, EACH ANCHORED TO ITS OWN EVIDENCE.  What this step
+        # waits for is two sequential facts with independent, model-paced
+        # durations: the SENDER must call send_to_sibling (an LLM, measured
+        # 50-130s), and only THEN does the peer run its turn (measured
+        # ~42s).  A single fixed window cannot fit both — 30 seconds
+        # measured neither, and even 220 seconds failed because almost all
+        # of it went on the first half.
+        #
+        # The peer's turn_count is read from ITS OWN transcript rather than
+        # from the bus: `turn.completed` for this session did not reach the
+        # cascade observer in repeated runs, while the daemon log showed the
+        # turn running.  And the framework saves a session at turn START and
+        # not again, so the on-disk count stays stale until something saves
+        # AFTER the turn ends — which is why each pass saves before reading.
+        await harness.save_session(client, awake.session_id)
+        turns_before = harness.turn_count_from_disk(cid, "awake")
+        await client.send_message(IDLE_SEND)
+
+        for _ in range(15):                       # (a) the send happened
+            await asyncio.sleep(10)
+            await harness.save_session(client, sender.session_id)
+            if _receipts_for(cid, "awake"):
+                break
+
+        idle_ran = False
+        for _ in range(10):                       # (b) the peer then ran
+            await asyncio.sleep(15)
+            await harness.save_session(client, awake.session_id)
+            now = harness.turn_count_from_disk(cid, "awake")
+            if now is not None and turns_before is not None and now > turns_before:
+                idle_ran = True
+                break
+        turns_after = harness.turn_count_from_disk(cid, "awake")
+        # BOTH: the counter moved, AND the peer actually answered the
+        # sibling's message.  The counter alone lags (saved at turn start,
+        # never again), so it can move for a reason other than this send.
+        replied = harness.replied_after_sibling_message(cid, "awake")
+        idle_ran = idle_ran and replied
+        note(f"idle: turn_count {turns_before} -> {turns_after}; "
+             f"replied_to_sibling={replied}; took_a_NEW_turn={idle_ran}")
 
         # 3. DELETED: must be no_such_sibling, never queued/accepted.
-        await client.inject_prompt(DEAD_SEND, source_type="user",
-                                   source_id="certify-c4")
+        # THE THIRD INSTRUCTION USED TO STRAND, and it cost two days of
+        # wrong diagnoses.  An inject starts a turn only while
+        # `_on_continuation_needed` is installed — for the duration of a
+        # send_message RPC and no longer.  The second instruction landed
+        # while the sender was still mid-turn, so the end-of-turn drain
+        # carried it; the third arrived after the sender had gone IDLE,
+        # where an inject only queues and nothing ever drains it.
+        #
+        # So the sender made two of three sends, C4b read the missing
+        # receipt as "no receipt observed for the send to a deleted
+        # sibling", and I read that as a save-timing problem, then as my
+        # own wait-pass regression, then as a network fault.  The receipt
+        # was missing because THE SEND NEVER HAPPENED.
+        #
+        # This driver is attached to the sender, so send_message is
+        # simply the right verb; it does not wait on the pending fix.
+        await client.send_message(DEAD_SEND)
         await asyncio.sleep(QUIET_WINDOW_S)
         # Force the SENDER's transcript to disk before reading it.
         # Transcripts are written on SAVE, not continuously, so every read
         # taken while the sender was still loaded came back empty — which
-        # is indistinguishable from "it never sent".  Attaching away
-        # unloads and saves it, the same mechanism used to make a sibling
-        # cold, so the evidence exists before it is asked for.
-        await client.attach_session(awake.session_id)
-
-        # POLL for the receipts rather than sleeping a guessed interval.
-        # A fixed wait read the transcript with two of three receipts in
-        # it and reported the third as "never sent" — while the sender's
-        # own history showed all three calls.  A missing receipt and a
-        # not-yet-saved one are the same empty list, so the wait has to
-        # be driven by the evidence appearing, not by a number I picked.
+        # is indistinguishable from "it never sent".
+        #
+        # This used to attach away, borrowing the unload above as a save.
+        # Reusing the cold-making mechanism to read evidence was always a
+        # pun on two different intentions, and it silently did nothing
+        # when the client was already attached elsewhere.  #617 gave the
+        # intention its own verb, which also does NOT unload the sender —
+        # so reading its transcript no longer changes its state.
+        # POLL, AND RE-SAVE ON EVERY PASS.  A fixed wait read the
+        # transcript with two of three receipts in it and reported the
+        # third as "never sent" — while the sender's own history showed
+        # all three calls.  A missing receipt and a not-yet-saved one are
+        # the same empty list, so the wait has to be driven by the
+        # evidence appearing.
+        #
+        # Saving ONCE before the loop does not fix that: it freezes
+        # whatever had happened by then, and every later poll re-reads
+        # the same stale file and concludes the send never happened.  The
+        # save has to be inside the loop, because it is what makes the
+        # predicate able to change at all.
         expected = ("resting", "awake", "gone")
         for _ in range(40):
             await asyncio.sleep(5)
+            await harness.save_session(client, sender.session_id)
             if all(_receipts_for(cid, t) for t in expected):
                 break
 
@@ -218,7 +294,11 @@ async def _run(note) -> tuple:
         note(f"cold={cold_receipts} idle={idle_receipts} "
              f"deleted={dead_receipts}")
     finally:
+        # `gone` is already deleted — deleting it twice would be asking
+        # the framework to confirm a fact this claim established itself.
+        await harness.release_siblings(client, resting, awake, sender)
         observer.cancel()
+        await watcher.disconnect()
         await client.disconnect()
 
     return (cold_woke, cold_receipts, idle_receipts, idle_ran,

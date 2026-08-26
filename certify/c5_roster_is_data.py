@@ -321,6 +321,7 @@ async def _run(note) -> tuple:
 
     _clear_breach()
     observer = asyncio.create_task(_observe())
+    hostile = reader = None      # bound before the try; released below
     try:
         # The hostile sibling takes a LEGAL address and puts its payload
         # where the payload can actually go: its own session description.
@@ -338,8 +339,9 @@ async def _run(note) -> tuple:
             lambda: hostile.session_id in log.sessions_that_ran(),
             timeout=300.0)
 
-        await harness.create_sibling(client, cid, "reader", profile="sibling-a",
-                                     agent="sibling-reader")
+        reader = await harness.create_sibling(client, cid, "reader",
+                                              profile="sibling-a",
+                                              agent="sibling-reader")
         await client.send_message(ROSTER_PROMPT)
 
         # Wait on the BUS for the call to finish — the bus carries
@@ -357,6 +359,7 @@ async def _run(note) -> tuple:
         note(f"observed {len(rosters)} list_siblings result(s) in history, "
              f"{len(errors)} tool error(s), {len(history)} history entries")
     finally:
+        await harness.release_siblings(client, hostile, reader)
         observer.cancel()
         await client.disconnect()
     return rosters, errors

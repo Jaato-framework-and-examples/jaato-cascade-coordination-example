@@ -173,3 +173,73 @@ REACTOR_RULE_DIRS = ("~/.jaato/reactors", "<workspace>/.jaato/reactors")
 
 #: Event class a reactor rule would match to make the widening agent-driven.
 AGENT_DRIVEN_TRIGGER = "agent.completed"
+
+
+# --- the delivery decision, framework #619 -------------------------------
+#
+# A DIFFERENT SURFACE from the send_to_sibling receipt above, and kept
+# apart deliberately.  Those statuses answer "what happened to my sibling
+# message"; these answer "what happened to a message handed to a session"
+# — the one fork every sender faces: the target is BUSY, so queue, or the
+# target is IDLE, so drive a turn.
+#
+# `inject_prompt` returned None for the life of this repository, and the
+# daemon discarded the runner's `{"ok": True}` before that, so a driver
+# had no channel at all: the receipt could have said anything and no
+# consumer could read it.  Two discards, fixed at both points in #619.
+INJECT_ACCEPTED = "accepted"      # target was idle; a turn was STARTED on it
+INJECT_QUEUED = "queued"          # target mid-turn; its running turn drains it
+INJECT_TERMINATED = "terminated"  # loaded but dead: read from the target's own
+                                  # terminal stamp, NEVER inferred from silence
+INJECT_NO_SESSION = "no_session"  # not loaded — kept distinct from terminated
+INJECT_UNREACHABLE = "unreachable"  # live, transport failed.  NOT a decision by
+                                    # the target, which is why it is not
+                                    # spelled `refused`
+#: Backpressure, and ONLY when a caller passes `require_idle` (#620).
+#: The target is mid-turn and the caller asked not to add to its queue, so
+#: NOTHING WAS ENQUEUED — which is why it is not in INJECT_DELIVERED.
+#: Answered by the target session rather than by the daemon's replica of
+#: its state: a peer that drained its backlog and went idle must not be
+#: refused for a backlog it no longer has.  It must never appear for an
+#: ordinary send or inject.
+INJECT_BUSY = "busy"
+INJECT_STATUSES = frozenset({INJECT_ACCEPTED, INJECT_QUEUED, INJECT_TERMINATED,
+                             INJECT_NO_SESSION, INJECT_UNREACHABLE,
+                             INJECT_BUSY})
+
+#: The statuses that mean the message WILL be acted on.  Everything else
+#: is a delivery that did not happen, and must never render as success —
+#: a caller that assumes delivery and is wrong gets a silent stall it
+#: cannot attribute, which is the expensive direction to be wrong in.
+INJECT_DELIVERED = frozenset({INJECT_ACCEPTED, INJECT_QUEUED})
+
+#: `None` IS NOT A STATUS.  It means "I was not told" — a pre-1.3 daemon,
+#: or a timeout — and it is deliberately not a member of INJECT_STATUSES
+#: so that "not told" cannot be mistaken for a delivery outcome.  This is
+#: the same distinction this repository keeps arriving at from every
+#: direction: absence must be expressible without being forgeable.
+INJECT_NOT_TOLD = None
+
+#: WHAT MAY BE ASSERTED TODAY, and what may not.
+#:
+#: `terminated`, `no_session` and `unreachable` are trustworthy now.
+#: `queued` is trustworthy EXCEPT in the turn-teardown tail: the runner's
+#: final drain runs strictly BEFORE the daemon's busy flag clears, so a
+#: message routed into that window is queued against a turn that will
+#: never drain again.  Closing it means moving the decision to the runner,
+#: which owns the authoritative flag.
+#:
+#: THE TAIL WAS CLOSED UPSTREAM IN #620 — the decision moved to the target
+#: session, under a lock held across both the check-and-enqueue and the
+#: turn's `_is_running` flip, so a `queued` message cannot be overtaken by
+#: the turn ending.  Verified by reading the lock into place in the commit,
+#: NOT by reading the module's prose, which still describes the tail as
+#: open at 2c11434a and is now a stale second copy of a fact it no longer
+#: matches.
+#:
+#: This stays False anyway, because it means "may a probe here assert it",
+#: and no probe here does.  Flipping it on someone else's report would put
+#: a claim in this file that nothing in this repository executes — which is
+#: the precise thing the flag exists to avoid.  It goes True when a probe
+#: exercises it, and not before.
+QUEUED_IS_EVENTUALLY_CONSUMED = False    # closed upstream; unexercised here

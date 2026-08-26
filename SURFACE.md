@@ -261,7 +261,7 @@ recorded with it.
    roster, which would read as "those siblings do not exist".
 
 
-## 4. Two things found while writing this
+## 4. Three things found while writing this
 
 ### 4.1 ~~`sibling.*` is already taken~~ — **RETRACTED, my error**
 
@@ -303,3 +303,47 @@ Reproduced on a clean `new profile-set` into an empty directory.
 `jaato-scaffold validate` gets this right — it labels findings
 `[workspace]` vs `[user]` — so `new` most likely just needs the same
 scoping before it decides the message.
+
+### 4.3 `session.save` — the verb that replaced a side effect
+
+A transcript is written on SAVE, so evidence a driver needs — a receipt
+body, a tool call — is not on disk while the session is still loaded.
+Until #617 nothing exposed the write, and the only way to force it was
+to **attach elsewhere and let the unload do it**:
+
+```python
+await client.attach_session(other.session_id)   # leave, and be saved
+```
+
+That is a side effect standing in for an interface, and it fails in a
+way that reads as success. It saves the session the client **leaves**,
+so it silently does nothing when the client was already attached
+somewhere else — and a save that quietly did nothing produces an empty
+transcript, which is indistinguishable from *the sibling never sent*.
+C1 abstained on an assertion it believed it was making for exactly this
+reason, and reported the abstention as a skip.
+
+The verb, reachable through the generic command channel:
+
+```python
+await client.execute_command("session.save", [session_id])
+```
+
+Saves **by id** without attaching, is idempotent, and does **not**
+disturb a running turn. Answers `SystemMessageEvent` on success and
+`SessionSaveError` when the target is not loaded — so "written" and
+"already on disk" stay distinct instead of collapsing into silence.
+
+Not unloading is the part that changes what is testable, not the
+convenience. A session can now be read **while it is mid-turn**, so C2
+can inspect a sibling sitting on an unresolved permission request
+without destroying the pending state it exists to observe. Under the
+old hack that read was self-defeating: forcing the save unloaded the
+session whose live state was the evidence.
+
+Reported by the perpetual-monologue cascade, whose strongest claim
+rested on a model's paraphrase rather than an artifact because the
+sending session's transcript was never re-saved. This repository was
+building the same workaround at the same time, and kept it for several
+hours after the fix had shipped — the cost of grepping a new commit for
+the one thing expected of it rather than reading what it changed.

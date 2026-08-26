@@ -134,12 +134,22 @@ def _secret_uri_resolves(uri: str) -> Optional[bool]:
 _PINNED: dict = {}
 
 
+def framework_root() -> str:
+    """The framework checkout this repository is certifying against.
+
+    Derived from the INSTALLED sdk rather than a configured path, so it
+    names the tree actually in use.  A configured second copy could
+    disagree with what is imported, and the disagreement would be silent.
+    """
+    import jaato_sdk
+    return os.path.dirname(os.path.dirname(os.path.dirname(
+        os.path.abspath(jaato_sdk.__file__))))
+
+
 def pin_framework_head() -> Optional[str]:
     """Record the commit this run certifies.  Call once, at run start."""
     import subprocess
-    import jaato_sdk
-    repo = os.path.dirname(os.path.dirname(os.path.dirname(
-        os.path.abspath(jaato_sdk.__file__))))
+    repo = framework_root()
     try:
         out = subprocess.run(["git", "-C", repo, "log", "-1", "--format=%ct %h"],
                              capture_output=True, text=True, timeout=15)
@@ -408,6 +418,25 @@ class EventLog:
                 for e in self.of_type(EventType.TURN_COMPLETED.value)
                 if getattr(e, "session_id", None)}
 
+    def turns_completed(self, session_id: str) -> int:
+        """How many turns have COMPLETED on one session.
+
+        A COUNT, because :meth:`sessions_that_ran` is a set and a set
+        cannot answer "did it run AGAIN".  C4a needs exactly that: its
+        idle sibling is prompted at creation, so it is already a member
+        before the send, and `after - before` is empty however many turns
+        it takes afterwards.
+
+        Both failures are the same defect wearing opposite signs — a
+        witness whose value does not depend on the thing under test.  The
+        cumulative membership test could never fail; the set difference
+        could never succeed; and the second was written to fix the first.
+        Counting is what the question actually was.
+        """
+        self.sessions_that_ran()      # reuse the attribution guard
+        return sum(1 for e in self.of_type(EventType.TURN_COMPLETED.value)
+                   if getattr(e, "session_id", None) == session_id)
+
 
 # --- reading events, safely -----------------------------------------------
 #: Every event field the certifications read, declared once.
@@ -570,3 +599,178 @@ async def wait_for(predicate, timeout: float = 180.0,
             return True
         await asyncio.sleep(poll)
     return False
+
+
+async def save_session(client: Any, session_id: str) -> None:
+    """Flush a LIVE session's transcript to disk (framework #617).
+
+    Transcripts are written on SAVE, so the evidence a claim reads —
+    a receipt body, a tool call — is simply not on disk while the
+    session is still loaded.  ``session.save`` writes it by ID, does
+    not disturb a running turn, and does not unload anything.
+
+    Before this verb existed the only way to force the write was to
+    attach elsewhere and let the unload do it: a side effect standing
+    in for an interface, and one that SILENTLY DID NOTHING when the
+    client was already attached elsewhere.  That is exactly how C1
+    came to abstain on an assertion it believed it was making — the
+    hack ran, reported nothing, and left the disk empty, which reads
+    identically to "the sibling never sent".
+
+    Because it does not unload, a session can be read WHILE IT IS
+    MID-TURN — which is what lets C2 inspect a sibling that is sitting
+    on an unresolved permission request without destroying the very
+    state it is there to observe.
+
+    The verb answers: ``SystemMessageEvent`` on success, or
+    ``SessionSaveError`` when the target is not loaded — an unloaded
+    session is already on disk.  Callers here do not read that answer;
+    they wait for the EVIDENCE to appear and fail if it does not, so
+    a save that quietly did nothing cannot pass as one that worked.
+    """
+    await client.execute_command("session.save", [session_id])
+
+
+def session_text(cascade_id: str, sibling_name: str) -> str:
+    """Everything one sibling's saved transcript holds, as flat text.
+
+    For proving a payload ARRIVED — which is a different fact from a
+    receipt saying it was accepted for delivery.  ``accepted`` is the
+    framework's word about its own queue; only the TARGET's transcript
+    shows what its model was actually handed, and that is the gap
+    between "the attack was attempted" and "the attack was delivered
+    intact and still refused".
+
+    Call ``save_session`` first: this reads the file, and the file is
+    written on save.
+    """
+    import json
+    chunks: List[str] = []
+    sessions = os.path.join(CONFIG_ROOT, "sessions")
+    if not os.path.isdir(sessions):
+        return ""
+    for name in sorted(os.listdir(sessions)):
+        if not name.endswith(".json"):
+            continue
+        try:
+            with open(os.path.join(sessions, name), encoding="utf-8") as fh:
+                doc = json.load(fh)
+        except (OSError, json.JSONDecodeError):
+            continue
+        if doc.get("cascade_driver_id") != cascade_id:
+            continue
+        if doc.get("sibling_name") != sibling_name:
+            continue
+        for entry in doc.get("history") or ():
+            for part in entry.get("parts") or ():
+                for key in ("text", "result", "response"):
+                    val = part.get(key)
+                    if isinstance(val, str):
+                        chunks.append(val)
+                    elif val is not None:
+                        chunks.append(repr(val))
+        for val in doc.get("user_inputs") or ():
+            if isinstance(val, str):
+                chunks.append(val)
+    return "\n".join(chunks)
+
+
+def turn_count_from_disk(cascade_id: str, sibling_name: str) -> Optional[int]:
+    """One sibling's own ``turn_count``, or None when it has no transcript.
+
+    A SECOND WITNESS for "did it run", independent of the cascade bus.
+
+    C4a needs to know whether an idle sibling took a turn on a sibling's
+    message.  Read off the bus, that fact went missing twice: the daemon
+    log showed a 42-second model call while ``turn.completed`` never
+    reached the observer, and moving the observer to its own client did
+    not change it.  The session's own counter does not depend on any of
+    that — and since #617 it can be read WITHOUT unloading the session,
+    so observing no longer disturbs the thing observed.
+
+    ``None`` means no transcript exists, which is NOT zero turns: a
+    sibling that has never been saved and one that has never run must
+    not read alike.  Callers save first and treat None as "cannot say".
+    """
+    import json
+    sessions = os.path.join(CONFIG_ROOT, "sessions")
+    if not os.path.isdir(sessions):
+        return None
+    for name in sorted(os.listdir(sessions)):
+        if not name.endswith(".json"):
+            continue
+        try:
+            with open(os.path.join(sessions, name), encoding="utf-8") as fh:
+                doc = json.load(fh)
+        except (OSError, json.JSONDecodeError):
+            continue
+        if (doc.get("cascade_driver_id") == cascade_id
+                and doc.get("sibling_name") == sibling_name):
+            return doc.get("turn_count")
+    return None
+
+
+def replied_after_sibling_message(cascade_id: str, sibling_name: str) -> bool:
+    """Did this sibling produce a model turn AFTER a sibling message arrived?
+
+    The claim is that an idle peer RUNS on a sibling's message, and a
+    turn counter is a proxy for that.  A weak one: the framework saves at
+    turn start and not again, so the on-disk count LAGS — a run that read
+    ``0 -> 1`` was watching true values of ``1 -> 2``.  The direction was
+    right, but a lagging counter can move for a reason other than the one
+    under test, and this claim has already been certified twice by
+    witnesses that moved for the wrong reason.
+
+    So this reads the behaviour instead of a proxy: find the entry that
+    carries the sibling's untrusted-content marker, and require a MODEL
+    entry after it.  That is the claim in its own terms.
+    """
+    import json
+    sessions = os.path.join(CONFIG_ROOT, "sessions")
+    if not os.path.isdir(sessions):
+        return False
+    for name in sorted(os.listdir(sessions)):
+        if not name.endswith(".json"):
+            continue
+        try:
+            with open(os.path.join(sessions, name), encoding="utf-8") as fh:
+                doc = json.load(fh)
+        except (OSError, json.JSONDecodeError):
+            continue
+        if (doc.get("cascade_driver_id") != cascade_id
+                or doc.get("sibling_name") != sibling_name):
+            continue
+        seen_sibling_message = False
+        for entry in doc.get("history") or ():
+            texts = " ".join(
+                str(p.get("text") or "") for p in (entry.get("parts") or ()))
+            if entry.get("role") == "user" and "source=sibling:" in texts:
+                seen_sibling_message = True
+            elif seen_sibling_message and entry.get("role") == "model":
+                return True
+    return False
+
+
+async def release_siblings(client: Any, *handles: Any) -> None:
+    """Delete the sessions a claim created, so the NEXT claim starts clean.
+
+    Every claim here used to leave its siblings loaded for the rest of
+    the run.  Each loaded session holds a runner process, so the suite
+    grew its own resource floor as it went and the LAST claims paid for
+    all the earlier ones: measured 17 runners and 2.6 GB free by the end
+    of a run that started with 4.5 GB, with C2 and C4 failing on timing
+    that passed comfortably when run alone.
+
+    A claim that fails because an earlier claim was still holding memory
+    is reporting on the suite, not on the framework — and it says so in
+    the language of a framework defect, which is the expensive kind of
+    wrong.
+
+    Deletes unconditionally: these are sessions this process created and
+    still holds handles for, so a failure to delete is a real fault and
+    should raise rather than be swallowed.  Pass only handles the claim
+    owns and has not already deleted.
+    """
+    for handle in handles:
+        if handle is not None:
+            await client.delete_session(handle.session_id)
